@@ -20,12 +20,18 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Toolchains & Dependencies
+      - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential clang lld llvm gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            libelf-dev bc bison flex libssl-dev make zip lz4 cpio wget jq python3 pahole device-tree-compiler \
-            libc6-dev linux-libc-dev rsync
+          sudo apt-get install -y build-essential libelf-dev bc bison flex libssl-dev make zip lz4 cpio wget jq python3 pahole device-tree-compiler libc6-dev linux-libc-dev rsync
+
+      - name: Download Android Clang Toolchain
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/toolchain
+          cd $GITHUB_WORKSPACE/toolchain
+          wget -q https://googlesource.com
+          tar -xzf clang-r450784e.tar.gz
+          echo "$GITHUB_WORKSPACE/toolchain/bin" >> $GITHUB_PATH
 
       - name: Download Source & Boot Assets from Release v1.0
         env:
@@ -35,7 +41,7 @@ jobs:
           gh release download v1.0 -D $GITHUB_WORKSPACE/assets
 
           cd $GITHUB_WORKSPACE/repack
-          MAGISK_URL=$(curl -s https://api.github.com/repos/topjohnwu/Magisk/releases/latest | jq -r '.assets[] | select(.name | endswith(".apk")) | .browser_download_url' | head -n 1)
+          MAGISK_URL=$(curl -s https://github.com | jq -r '.assets[] | select(.name | endswith(".apk")) | .browser_download_url' | head -n 1)
           wget -q "$MAGISK_URL" -O magisk.zip
           unzip -j magisk.zip "lib/x86_64/libmagiskboot.so" -d ./
           mv libmagiskboot.so magiskboot && chmod +x magiskboot
@@ -57,43 +63,35 @@ jobs:
 
           sed -i 's|^CROSS_COMPILE.*=.*|CROSS_COMPILE ?= aarch64-linux-gnu-|g' Makefile || true
           sed -i 's|^CC.*=.*|CC ?= clang|g' Makefile || true
-          sed -i 's|^CLANG_TRIPLE.*=.*|CLANG_TRIPLE ?= aarch64-linux-gnu-|g' Makefile || true
 
-          # Save a clean backup of fs/ and include/ in case SUSFS patch has a conflict
           rsync -a fs/ $GITHUB_WORKSPACE/backup_fs/
           rsync -a include/ $GITHUB_WORKSPACE/backup_include/
 
-      - name: Integrate KernelSU-Next & SUSFS (With Fuzz & Reject Detection)
+      - name: Integrate KernelSU-Next & SUSFS
         run: |
           cd $KERNEL_DIR
           USE_SUSFS="false"
-
           if [ "${{ github.event.inputs.ksu_mode }}" = "susfs" ]; then
-            git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15 $GITHUB_WORKSPACE/susfs4ksu
+            git clone --depth=1 https://gitlab.com -b gki-android13-5.15 $GITHUB_WORKSPACE/susfs4ksu
             cp -r $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/* ./fs/
             cp -r $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/* ./include/linux/
             cp $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch ./
 
-            echo "=== Attempting SUSFS Patch with --fuzz=3 ==="
             if patch -p1 --fuzz=3 --forward < 50_add_susfs_in_gki-android13-5.15.patch; then
-              echo "SUCCESS: SUSFS patch applied 100% cleanly!"
+              echo "SUCCESS: SUSFS patch applied cleanly!"
               USE_SUSFS="true"
-              curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
+              curl -LSs "https://githubusercontent.com" | bash -s dev-susfs
             else
-              echo "=== WARNING: SUSFS patch had rejected hunks on Samsung's modified tree ==="
-              find . -name "*.rej" -print -exec cat {} +
-              echo "=== Restoring clean fs/ and falling back to Official KernelSU-Next (Kprobe Mode) so build succeeds! ==="
+              echo "=== FALLBACK: SUSFS failed, using clean source Kprobe Mode ==="
               rsync -a --delete $GITHUB_WORKSPACE/backup_fs/ fs/
               rsync -a --delete $GITHUB_WORKSPACE/backup_include/ include/
               find . -name "*.rej" -delete
               find . -name "*.orig" -delete
-              USE_SUSFS="false"
-              curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+              curl -LSs "https://githubusercontent.com" | bash -s next
             fi
           else
-            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+            curl -LSs "https://githubusercontent.com" | bash -s next
           fi
-
           echo "USE_SUSFS=$USE_SUSFS" >> $GITHUB_ENV
 
       - name: Compile Kernel
@@ -105,7 +103,6 @@ jobs:
 
           cd $KERNEL_DIR
           DEFCONFIG=$(ls arch/arm64/configs/*m14* arch/arm64/configs/*8535* 2>/dev/null | head -n 1 | xargs basename || echo "s5e8535-m14xnsxx_defconfig")
-          echo "Using DEFCONFIG: $DEFCONFIG (USE_SUSFS=$USE_SUSFS)"
 
           cat << 'KCFG' >> arch/arm64/configs/$DEFCONFIG
           CONFIG_KSU=y
@@ -140,15 +137,10 @@ jobs:
           SCFG
           fi
 
-          export HOSTCFLAGS=""
-          export HOSTLDFLAGS=""
           export PLATFORM_VERSION=13
           export TARGET_SOC=s5e8535
-          export DEPMOD=depmod
-          export DTC_FLAGS="-@"
 
-          MAKE_ARGS="O=out ARCH=arm64 TARGET_SOC=s5e8535 PLATFORM_VERSION=13 LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- HOSTCC=gcc HOSTCXX=g++"
-
+          MAKE_ARGS="O=out ARCH=arm64 LLVM=1 LLVM_IAS=1"
           make $MAKE_ARGS $DEFCONFIG
 
           ./scripts/config --file out/.config \
@@ -157,10 +149,7 @@ jobs:
             --set-str LOCALVERSION "$STOCK_VER"
 
           if [ "$USE_SUSFS" = "true" ]; then
-            ./scripts/config --file out/.config \
-              -e KSU_SUSFS -e KSU_SUSFS_SUS_PATH -e KSU_SUSFS_SUS_MOUNT \
-              -e KSU_SUSFS_SUS_KSTAT -e KSU_SUSFS_TRY_UMOUNT -e KSU_SUSFS_SPOOF_UNAME \
-              -e KSU_SUSFS_ENABLE_LOG -e KSU_SUSFS_OPEN_REDIRECT
+            ./scripts/config --file out/.config -e KSU_SUSFS -e KSU_SUSFS_SUS_PATH -e KSU_SUSFS_SUS_MOUNT -e KSU_SUSFS_SUS_KSTAT -e KSU_SUSFS_TRY_UMOUNT -e KSU_SUSFS_SPOOF_UNAME -e KSU_SUSFS_ENABLE_LOG -e KSU_SUSFS_OPEN_REDIRECT
           fi
 
           make $MAKE_ARGS olddefconfig
@@ -174,7 +163,6 @@ jobs:
           lz4 -B6 --content-size -f new-boot.img boot.img.lz4
           cp $GITHUB_WORKSPACE/assets/vbmeta.img.lz4 ./vbmeta.img.lz4
           tar -H ustar -cf KSUN_SUSFS_M146B_DZI1.tar boot.img.lz4 vbmeta.img.lz4
-          ls -lh KSUN_SUSFS_M146B_DZI1.tar
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
