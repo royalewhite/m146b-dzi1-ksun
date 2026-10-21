@@ -37,25 +37,10 @@ jobs:
           gh release download v1.0 -D $GITHUB_WORKSPACE/assets
           ls -lh $GITHUB_WORKSPACE/assets
 
-      - name: Inspect Stock DZI1 boot.img & Extract Exact Vermagic
+      - name: Setup Dynamic Kernel Environment Variables
         run: |
-          mkdir -p $GITHUB_WORKSPACE/repack && cd $GITHUB_WORKSPACE/repack
-          MAGISK_URL=$(curl -fsSL https://github.com | jq -r '.assets[] | select(.name | endswith(".apk")) | .browser_download_url' | head -n 1)
-          wget -q "$MAGISK_URL" -O magisk.zip
-          unzip -j magisk.zip "lib/x86_64/libmagiskboot.so" -d ./
-          mv libmagiskboot.so magiskboot && chmod +x magiskboot
-
-          cp $GITHUB_WORKSPACE/assets/stock_boot.img ./boot.img
-          ./magiskboot unpack boot.img
-
-          FULL_VER=$(strings kernel | grep -oE "^5\\.15\\.[0-9]+-android13-[0-9]+-[0-9a-zA-Z_-]+" | head -n 1 || true)
-          echo "Detected Stock DZI1 Kernel Version: $FULL_VER"
-          LOCAL_VER=$(echo "$FULL_VER" | sed -E 's/^5\\.15\\.[0-9]+//')
-          if [ -z "$LOCAL_VER" ]; then
-            LOCAL_VER="-android13-3-31192385"
-          fi
-          echo "Using LOCAL_VER: $LOCAL_VER"
-          echo "STOCK_LOCALVER=$LOCAL_VER" >> $GITHUB_ENV
+          # Hardcoding verified stock local version to bypass magiskboot dependencies entirely
+          echo "STOCK_LOCALVER=-android13-3-31192385" >> $GITHUB_ENV
 
       - name: Extract Kernel.tar.gz
         run: |
