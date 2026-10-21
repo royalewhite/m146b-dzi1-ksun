@@ -67,7 +67,7 @@ jobs:
           tar -xzf $GITHUB_WORKSPACE/assets/Kernel.tar.gz
           ls -la
 
-      - name: Setup AOSP Clang r450784d & Samsung Build Tools
+      - name: Setup AOSP Clang r450784e & Samsung Build Tools
         run: |
           mkdir -p $GITHUB_WORKSPACE/toolchain && cd $GITHUB_WORKSPACE/toolchain
 
