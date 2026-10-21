@@ -79,6 +79,7 @@ jobs:
 
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 -b android-12.1.0_r27 $GITHUB_WORKSPACE/toolchain/gcc64
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/build-tools -b android-13.0.0_r24 $GITHUB_WORKSPACE/toolchain/build-tools
+          git clone --depth=1 https://android.googlesource.com/kernel/prebuilts/build-tools -b android13-5.15 $GITHUB_WORKSPACE/toolchain/kernel-build-tools || true
 
       - name: Integrate KernelSU-Next & SUSFS (gki-android13-5.15)
         run: |
@@ -111,7 +112,7 @@ jobs:
             curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           fi
 
-      - name: Configure Defconfig & Compile Kernel (Samsung Spec)
+      - name: Configure Defconfig & Compile Kernel (README Spec)
         run: |
           cd $KERNEL_DIR
           DEFCONFIG="${{ github.event.inputs.defconfig_override }}"
@@ -157,13 +158,14 @@ jobs:
           export LLVM_IAS=1
           export DEPMOD=depmod
           export DTC_FLAGS="-@"
+          export HOSTCFLAGS="--sysroot=/usr/include -I/usr/include"
+          export HOSTLDFLAGS="-L/usr/lib/x86_64-linux-gnu -fuse-ld=lld"
           export PATH="$TC/clang-r450784d/bin:$TC/gcc64/bin:$TC/build-tools/path/linux-x86:$PATH"
 
-          # Step 1: Sequential Defconfig Setup
-          make $DEFCONFIG
+          # Strict README compliance: Run make with TARGET_SOC and O=out
+          make O=out ARCH=arm64 TARGET_SOC=s5e8535 LLVM=1 LLVM_IAS=1 $DEFCONFIG
 
-          # Step 2: Inject config overrides
-          ./scripts/config --file .config \
+          ./scripts/config --file out/.config \
             -e KSU -e KPROBES -e HAVE_KPROBES -e KPROBE_EVENTS \
             -e KSU_SUSFS -e KSU_SUSFS_SUS_PATH -e KSU_SUSFS_SUS_MOUNT \
             -e KSU_SUSFS_SUS_KSTAT -e KSU_SUSFS_TRY_UMOUNT -e KSU_SUSFS_SPOOF_UNAME \
@@ -171,16 +173,14 @@ jobs:
             -d SECURITY_DEFEX -d UH -d RKP -d KDP -d PROCA -d FIVE -d INTEGRITY -d TRIM_UNUSED_KSYMS \
             --set-str LOCALVERSION "$STOCK_LOCALVER"
 
-          make olddefconfig
-
-          # Step 3: Sequential header generation first, then parallel Image build
-          make headers_install
-          make -j$(nproc --all) Image
+          make O=out ARCH=arm64 TARGET_SOC=s5e8535 LLVM=1 LLVM_IAS=1 olddefconfig
+          make -j$(nproc --all) O=out ARCH=arm64 TARGET_SOC=s5e8535 LLVM=1 LLVM_IAS=1 Image
 
       - name: Repack DZI1 boot.img & Build Brokkr TAR
         run: |
           cd $GITHUB_WORKSPACE/repack
-          cp $KERNEL_DIR/arch/arm64/boot/Image ./kernel
+          cp $KERNEL_DIR/out/arch/arm64/boot/Image ./kernel
+          ./magiskboot unpack boot.img
           ./magiskboot repack boot.img new-boot.img
 
           lz4 -B6 --content-size -f new-boot.img boot.img.lz4
