@@ -60,6 +60,7 @@ jobs:
           # Strip Samsung's hardcoded compiler paths so native Ubuntu tools work
           sed -i 's|^CROSS_COMPILE.*=.*|CROSS_COMPILE ?= aarch64-linux-gnu-|g' Makefile || true
           sed -i 's|^CC.*=.*|CC ?= clang|g' Makefile || true
+          sed -i 's|^CLANG_TRIPLE.*=.*|CLANG_TRIPLE ?= aarch64-linux-gnu-|g' Makefile || true
 
       - name: Integrate KernelSU-Next & SUSFS
         run: |
@@ -123,16 +124,10 @@ jobs:
           export HOSTCFLAGS=""
           export HOSTLDFLAGS=""
           
-          # Set standard environment
-          export ARCH=arm64
-          export LLVM=1
-          export LLVM_IAS=1
-          export CC=clang
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export HOSTCC=gcc
-          export HOSTCXX=g++
+          # Define exact make arguments to prevent environment variable scoping drops
+          MAKE_ARGS="O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- HOSTCC=gcc HOSTCXX=g++"
 
-          make O=out $DEFCONFIG
+          make $MAKE_ARGS $DEFCONFIG
 
           ./scripts/config --file out/.config \
             -e KSU -e KPROBES -e HAVE_KPROBES -e KPROBE_EVENTS \
@@ -142,8 +137,8 @@ jobs:
             -d SECURITY_DEFEX -d UH -d RKP -d KDP -d PROCA -d FIVE -d INTEGRITY -d TRIM_UNUSED_KSYMS \
             --set-str LOCALVERSION "$STOCK_VER"
 
-          make O=out olddefconfig
-          make O=out -j$(nproc --all) Image
+          make $MAKE_ARGS olddefconfig
+          make $MAKE_ARGS -j$(nproc --all) Image
 
       - name: Repack Flashable TAR
         run: |
