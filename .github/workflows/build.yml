@@ -20,90 +20,79 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Build Dependencies
+      - name: Install Native Ubuntu Toolchains (Bypassing Samsung's Broken Links)
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib \
-            git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool \
-            libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush \
-            rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3 pahole \
-            device-tree-compiler lz4 cpio wget jq binutils clang lld llvm
+          sudo apt-get install -y build-essential clang lld gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            libelf-dev bc bison flex libssl-dev make zip lz4 cpio wget jq python3 \
+            libc6-dev linux-libc-dev
 
       - name: Download Source & Boot Assets from Release v1.0
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p $GITHUB_WORKSPACE/assets $GITHUB_WORKSPACE/kernel
+          mkdir -p $GITHUB_WORKSPACE/assets $GITHUB_WORKSPACE/kernel $GITHUB_WORKSPACE/repack
           gh release download v1.0 -D $GITHUB_WORKSPACE/assets
-          ls -lh $GITHUB_WORKSPACE/assets
+          
+          # Grab magiskboot for repacking
+          cd $GITHUB_WORKSPACE/repack
+          MAGISK_URL=$(curl -s https://api.github.com/repos/topjohnwu/Magisk/releases/latest | jq -r '.assets[] | select(.name | endswith(".apk")) | .browser_download_url' | head -n 1)
+          wget -q "$MAGISK_URL" -O magisk.zip
+          unzip -j magisk.zip "lib/x86_64/libmagiskboot.so" -d ./
+          mv libmagiskboot.so magiskboot && chmod +x magiskboot
 
-      - name: Setup Dynamic Kernel Environment Variables
-        run: |
-          # Hardcoding verified stock local version to bypass magiskboot dependencies entirely
-          echo "STOCK_LOCALVER=-android13-3-31192385" >> $GITHUB_ENV
-
-      - name: Extract Kernel.tar.gz
+      - name: Extract Kernel Source
         run: |
           cd $GITHUB_WORKSPACE/kernel
           tar -xzf $GITHUB_WORKSPACE/assets/Kernel.tar.gz
-          ls -la
 
-      - name: Setup Toolchain Paths
-        run: |
-          mkdir -p $GITHUB_WORKSPACE/toolchain
-          cd $GITHUB_WORKSPACE/toolchain
-          mkdir -p clang/host/linux-x86/clang-r450784d
-
-          wget -q https://googlesource.com -O clang.tar.gz
-
-          if [ -f clang.tar.gz ]; then
-            tar -xzf clang.tar.gz -C clang/host/linux-x86/clang-r450784d
-            rm -f clang.tar.gz
-          else
-            echo "Fallback to mirror..."
-            git clone --depth=1 https://github.com clang-mirror
-            mv clang-mirror/clang-r450784d/* clang/host/linux-x86/clang-r450784d/
-            rm -rf clang-mirror
-          fi
-
-          git clone --depth=1 https://googlesource.com -b android-12.1.0_r27 gcc/linux-x86/aarch64/aarch64-linux-android-4.9
-          git clone --depth=1 https://googlesource.com -b android13-gsi build/kernel/build-tools
-          git clone --depth=1 https://googlesource.com -b android13-5.15 prebuilts/kernel-build-tools || true
-          mkdir -p build/kernel/build-tools/sysroot
-
-      - name: Integrate KernelSU-Next & SUSFS
+      - name: Prepare Kernel Environment (Nuke Hardcoded Paths)
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          if [ -d "kernel-5.15/drivers" ]; then
-            cd kernel-5.15
-          elif [ -d "common/drivers" ]; then
-            cd common
-          fi
+          if [ -d "kernel-5.15/drivers" ]; then cd kernel-5.15; elif [ -d "common/drivers" ]; then cd common; fi
           echo "KERNEL_DIR=$(pwd)" >> $GITHUB_ENV
 
+          # Strip dirty tags
           if [ -f "scripts/setlocalversion" ]; then
             sed -i 's/ -dirty//g; s/-dirty//g; s/echo "+"/echo ""/g' scripts/setlocalversion || true
           fi
 
-          if [ "${{ github.event.inputs.ksu_mode }}" = "susfs" ]; then
-            curl -fLSs "https://githubusercontent.com" | bash -s dev-susfs || \
-            curl -fLSs "https://githubusercontent.com" | bash -s next
+          # Strip Samsung's hardcoded compiler paths so native Ubuntu tools work
+          sed -i 's|^CROSS_COMPILE.*=.*|CROSS_COMPILE ?= aarch64-linux-gnu-|g' Makefile || true
+          sed -i 's|^CC.*=.*|CC ?= clang|g' Makefile || true
 
-            git clone --depth=1 https://gitlab.com -b gki-android13-5.15 $GITHUB_WORKSPACE/susfs4ksu
+      - name: Integrate KernelSU-Next & SUSFS
+        run: |
+          cd $KERNEL_DIR
+          if [ "${{ github.event.inputs.ksu_mode }}" = "susfs" ]; then
+            curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs || \
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+
+            git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15 $GITHUB_WORKSPACE/susfs4ksu
             cp -r $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/* ./fs/
             cp -r $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/* ./include/linux/
             cp $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch ./
             patch -p1 --forward < 50_add_susfs_in_gki-android13-5.15.patch || true
           else
-            curl -fLSs "https://githubusercontent.com" | bash -s next
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           fi
 
-      - name: Compile Kernel with Native HOSTCC
+      - name: Compile Kernel
         run: |
           cd $KERNEL_DIR
           
-          TARGET_CFG="arch/arm64/configs/s5e8535-m14xnsxx_defconfig"
-          cat << 'KCFG' >> "$TARGET_CFG"
+          # Extract original vermagic to ensure WiFi/BT modules load
+          cd $GITHUB_WORKSPACE/repack
+          cp $GITHUB_WORKSPACE/assets/stock_boot.img ./boot.img
+          ./magiskboot unpack boot.img
+          STOCK_VER=$(strings kernel | grep -oE "^5\.15\.[0-9]+-android13-[0-9]+-[0-9a-zA-Z_-]+" | head -n 1 | sed -E 's/^5\.15\.[0-9]+//' || echo "-android13-3-31192385")
+          cd $KERNEL_DIR
+
+          # Auto-detect defconfig
+          DEFCONFIG=$(ls arch/arm64/configs/*m14* arch/arm64/configs/*8535* 2>/dev/null | head -n 1 | xargs basename || echo "s5e8535-m14xnsxx_defconfig")
+          
+          # Append KSUN/SUSFS/Knox Bypass configs
+          cat << 'KCFG' >> arch/arm64/configs/$DEFCONFIG
           CONFIG_KSU=y
           CONFIG_KPROBES=y
           CONFIG_HAVE_KPROBES=y
@@ -130,39 +119,42 @@ jobs:
           CONFIG_TRIM_UNUSED_KSYMS=n
           KCFG
 
-          TC="$GITHUB_WORKSPACE/toolchain"
-          export PLATFORM_VERSION=13
-          export PATH="$TC/clang/host/linux-x86/clang-r450784d/bin:$PATH"
-          export TARGET_SOC=s5e8535
+          # CRITICAL FIX: Kill Samsung's broken sysroot paths so Ubuntu native headers work
+          export HOSTCFLAGS=""
+          export HOSTLDFLAGS=""
+          
+          # Set standard environment
           export ARCH=arm64
-          export CROSS_COMPILE="$TC/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-"
+          export LLVM=1
+          export LLVM_IAS=1
+          export CC=clang
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export HOSTCC=gcc
+          export HOSTCXX=g++
 
-          make s5e8535-m14xnsxx_defconfig HOSTCC=gcc HOSTCXX=g++
+          make O=out $DEFCONFIG
 
-          ./scripts/config --file .config \
+          ./scripts/config --file out/.config \
             -e KSU -e KPROBES -e HAVE_KPROBES -e KPROBE_EVENTS \
             -e KSU_SUSFS -e KSU_SUSFS_SUS_PATH -e KSU_SUSFS_SUS_MOUNT \
             -e KSU_SUSFS_SUS_KSTAT -e KSU_SUSFS_TRY_UMOUNT -e KSU_SUSFS_SPOOF_UNAME \
             -e KSU_SUSFS_ENABLE_LOG -e KSU_SUSFS_OPEN_REDIRECT \
             -d SECURITY_DEFEX -d UH -d RKP -d KDP -d PROCA -d FIVE -d INTEGRITY -d TRIM_UNUSED_KSYMS \
-            --set-str LOCALVERSION "$STOCK_LOCALVER"
+            --set-str LOCALVERSION "$STOCK_VER"
 
-          make olddefconfig HOSTCC=gcc HOSTCXX=g++
-          make -j$(nproc --all) LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++
+          make O=out olddefconfig
+          make O=out -j$(nproc --all) Image
 
-      - name: Repack DZI1 boot.img & Build Brokkr TAR
+      - name: Repack Flashable TAR
         run: |
           cd $GITHUB_WORKSPACE/repack
-          cp $GITHUB_WORKSPACE/kernel/**/arch/arm64/boot/Image ./kernel || cp arch/arm64/boot/Image ./kernel
-          ./magiskboot unpack boot.img
+          cp $KERNEL_DIR/out/arch/arm64/boot/Image ./kernel
           ./magiskboot repack boot.img new-boot.img
-
           lz4 -B6 --content-size -f new-boot.img boot.img.lz4
           cp $GITHUB_WORKSPACE/assets/vbmeta.img.lz4 ./vbmeta.img.lz4
           tar -H ustar -cf KSUN_SUSFS_M146B_DZI1.tar boot.img.lz4 vbmeta.img.lz4
-          ls -lh KSUN_SUSFS_M146B_DZI1.tar
 
-      - name: Upload Compiled Brokkr TAR
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: KSUN_SUSFS_M146B_DZI1
