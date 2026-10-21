@@ -111,7 +111,7 @@ jobs:
             curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           fi
 
-      - name: Configure Defconfig & Compile Kernel
+      - name: Configure Defconfig & Compile Kernel (Samsung Spec)
         run: |
           cd $KERNEL_DIR
           DEFCONFIG="${{ github.event.inputs.defconfig_override }}"
@@ -159,8 +159,10 @@ jobs:
           export DTC_FLAGS="-@"
           export PATH="$TC/clang-r450784d/bin:$TC/gcc64/bin:$TC/build-tools/path/linux-x86:$PATH"
 
-          make ARCH=arm64 LLVM=1 LLVM_IAS=1 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="$TC/gcc64/bin/aarch64-linux-android-" $DEFCONFIG
+          # Step 1: Sequential Defconfig Setup
+          make $DEFCONFIG
 
+          # Step 2: Inject config overrides
           ./scripts/config --file .config \
             -e KSU -e KPROBES -e HAVE_KPROBES -e KPROBE_EVENTS \
             -e KSU_SUSFS -e KSU_SUSFS_SUS_PATH -e KSU_SUSFS_SUS_MOUNT \
@@ -169,8 +171,11 @@ jobs:
             -d SECURITY_DEFEX -d UH -d RKP -d KDP -d PROCA -d FIVE -d INTEGRITY -d TRIM_UNUSED_KSYMS \
             --set-str LOCALVERSION "$STOCK_LOCALVER"
 
-          make ARCH=arm64 LLVM=1 LLVM_IAS=1 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="$TC/gcc64/bin/aarch64-linux-android-" olddefconfig
-          make -j$(nproc --all) ARCH=arm64 LLVM=1 LLVM_IAS=1 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="$TC/gcc64/bin/aarch64-linux-android-" Image
+          make olddefconfig
+
+          # Step 3: Sequential header generation first, then parallel Image build
+          make headers_install
+          make -j$(nproc --all) Image
 
       - name: Repack DZI1 boot.img & Build Brokkr TAR
         run: |
