@@ -68,16 +68,16 @@ jobs:
           mkdir -p $GITHUB_WORKSPACE/toolchain
           cd $GITHUB_WORKSPACE/toolchain
 
-          mkdir -p clang/host/linux-x86/clang-r450784e
-          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android13-release/clang-r450784e.tar.gz -O clang.tar.gz || \
-          wget -q https://github.com/chenxiaolong/CPH-Kernel-Definer/releases/download/tools/clang-r450784e.tar.gz -O clang.tar.gz
+          mkdir -p clang/host/linux-x86/clang-r450784d
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android13-release/clang-r450784d.tar.gz -O clang.tar.gz || \
+          wget -q https://github.com/chenxiaolong/CPH-Kernel-Definer/releases/download/tools/clang-r450784d.tar.gz -O clang.tar.gz
           
           if [ -f clang.tar.gz ]; then
-            tar -xzf clang.tar.gz -C clang/host/linux-x86/clang-r450784e
+            tar -xzf clang.tar.gz -C clang/host/linux-x86/clang-r450784d
             rm -f clang.tar.gz
           else
             git clone --depth=1 https://github.com/droidian/android-platform-prebuilts-clang-host-linux-x86-33 clang-mirror
-            mv clang-mirror/clang-r450784e/* clang/host/linux-x86/clang-r450784e/
+            mv clang-mirror/clang-r450784d/* clang/host/linux-x86/clang-r450784d/
             rm -rf clang-mirror
           fi
 
@@ -147,7 +147,7 @@ jobs:
 
           TC="$GITHUB_WORKSPACE/toolchain"
           export PLATFORM_VERSION=13
-          export PATH="$TC/clang/host/linux-x86/clang-r450784e/bin:$PATH"
+          export PATH="$TC/clang/host/linux-x86/clang-r450784d/bin:$PATH"
           export TARGET_SOC=s5e8535
           export ARCH=arm64
           export CROSS_COMPILE="$TC/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-"
