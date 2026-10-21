@@ -71,15 +71,15 @@ jobs:
         run: |
           mkdir -p $GITHUB_WORKSPACE/toolchain && cd $GITHUB_WORKSPACE/toolchain
 
-          echo "Downloading AOSP clang-r450784d (as required by README_Kernel.txt)..."
-          mkdir -p clang-r450784d
-          if curl -LSs --fail --retry 3 "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android13-release/clang-r450784d.tar.gz" -o clang.tar.gz; then
-            tar -xzf clang.tar.gz -C clang-r450784d
+          echo "Downloading AOSP clang-r450784e (as required by README_Kernel.txt)..."
+          mkdir -p clang-r450784e
+          if curl -LSs --fail --retry 3 "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android13-release/clang-r450784e.tar.gz" -o clang.tar.gz; then
+            tar -xzf clang.tar.gz -C clang-r450784e
             rm -f clang.tar.gz
           else
-            echo "Fallback to GitHub mirror for clang-r450784d..."
+            echo "Fallback to GitHub mirror for clang-r450784e..."
             git clone --depth=1 https://github.com/droidian/android-platform-prebuilts-clang-host-linux-x86-33 clang-mirror
-            mv clang-mirror/clang-r450784d/* clang-r450784d/
+            mv clang-mirror/clang-r450784e/* clang-r450784e/
             rm -rf clang-mirror
           fi
 
@@ -88,7 +88,7 @@ jobs:
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/build-tools -b android-13.0.0_r24 build-tools
           git clone --depth=1 https://android.googlesource.com/kernel/prebuilts/build-tools -b android13-5.15 kernel-build-tools || true
 
-          ls -la $GITHUB_WORKSPACE/toolchain/clang-r450784d/bin/clang
+          ls -la $GITHUB_WORKSPACE/toolchain/clang-r450784e/bin/clang
 
       - name: Integrate KernelSU-Next & SUSFS (gki-android13-5.15)
         run: |
@@ -189,13 +189,13 @@ jobs:
           export LLVM_IAS=1
           export DEPMOD=depmod
           export DTC_FLAGS="-@"
-          export PATH="$TC/clang-r450784d/bin:$TC/gcc64/bin:$TC/build-tools/path/linux-x86:$TC/kernel-build-tools/linux-x86/bin:$PATH"
+          export PATH="$TC/clang-r450784e/bin:$TC/gcc64/bin:$TC/build-tools/path/linux-x86:$TC/kernel-build-tools/linux-x86/bin:$PATH"
 
           make \
             ARCH=arm64 \
             LLVM=1 \
             LLVM_IAS=1 \
-            CC="$TC/clang-r450784d/bin/clang" \
+            CC="$TC/clang-r450784e/bin/clang" \
             CLANG_TRIPLE="aarch64-linux-gnu-" \
             CROSS_COMPILE="$TC/gcc64/bin/aarch64-linux-android-" \
             $DEFCONFIG
@@ -212,7 +212,7 @@ jobs:
             ARCH=arm64 \
             LLVM=1 \
             LLVM_IAS=1 \
-            CC="$TC/clang-r450784d/bin/clang" \
+            CC="$TC/clang-r450784e/bin/clang" \
             CLANG_TRIPLE="aarch64-linux-gnu-" \
             CROSS_COMPILE="$TC/gcc64/bin/aarch64-linux-android-" \
             olddefconfig
@@ -221,7 +221,7 @@ jobs:
             ARCH=arm64 \
             LLVM=1 \
             LLVM_IAS=1 \
-            CC="$TC/clang-r450784d/bin/clang" \
+            CC="$TC/clang-r450784e/bin/clang" \
             CLANG_TRIPLE="aarch64-linux-gnu-" \
             CROSS_COMPILE="$TC/gcc64/bin/aarch64-linux-android-" \
             Image
