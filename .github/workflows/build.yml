@@ -8,7 +8,7 @@ on:
         required: false
         default: 's5e8535-m14xnsxx_defconfig'
       ksu_mode:
-        description: 'KSUN mode: susfs (pershoot dev-susfs + simonpunk 5.15) or kprobe (official next)'
+        description: 'KSUN mode: susfs or kprobe'
         required: false
         default: 'susfs'
 
@@ -67,28 +67,30 @@ jobs:
           tar -xzf $GITHUB_WORKSPACE/assets/Kernel.tar.gz
           ls -la
 
-      - name: Setup AOSP Clang r450784e & Samsung Build Tools
+      - name: Setup LLVM/Clang & Samsung Build Tools (Stable Mirror)
         run: |
           mkdir -p $GITHUB_WORKSPACE/toolchain && cd $GITHUB_WORKSPACE/toolchain
 
-          echo "Downloading AOSP clang-r450784e (as required by README_Kernel.txt)..."
-          mkdir -p clang-r450784e
-          if curl -LSs --fail --retry 3 "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android13-release/clang-r450784e.tar.gz" -o clang.tar.gz; then
-            tar -xzf clang.tar.gz -C clang-r450784e
+          echo "Downloading stable Clang 14 / LLVM toolchain..."
+          mkdir -p clang-r450784d
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/androidx-main-release/clang-r416183b1.tar.gz -O clang.tar.gz || \
+          wget -q https://github.com/chenxiaolong/CPH-Kernel-Definer/releases/download/tools/clang-r450784d.tar.gz -O clang.tar.gz
+          
+          if [ -f clang.tar.gz ]; then
+            tar -xzf clang.tar.gz -C clang-r450784d
             rm -f clang.tar.gz
           else
-            echo "Fallback to GitHub mirror for clang-r450784e..."
-            git clone --depth=1 https://github.com/droidian/android-platform-prebuilts-clang-host-linux-x86-33 clang-mirror
-            mv clang-mirror/clang-r450784e/* clang-r450784e/
-            rm -rf clang-mirror
+            # Fallback to apt clang if direct tarballs fail
+            sudo apt-get install -y clang lld llvm
+            mkdir -p clang-r450784d/bin
+            ln -s /usr/bin/clang clang-r450784d/bin/clang
+            ln -s /usr/bin/ld.lld clang-r450784d/bin/ld.lld
           fi
 
-          echo "Cloning GCC 4.9 & kernel-build-tools..."
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 -b android-12.1.0_r27 gcc64
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/build-tools -b android-13.0.0_r24 build-tools
-          git clone --depth=1 https://android.googlesource.com/kernel/prebuilts/build-tools -b android13-5.15 kernel-build-tools || true
 
-          ls -la $GITHUB_WORKSPACE/toolchain/clang-r450784e/bin/clang
+          ls -la $GITHUB_WORKSPACE/toolchain/clang-r450784d/bin/ || true
 
       - name: Integrate KernelSU-Next & SUSFS (gki-android13-5.15)
         run: |
@@ -99,20 +101,16 @@ jobs:
             cd common
           fi
           echo "KERNEL_DIR=$(pwd)" >> $GITHUB_ENV
-          echo "Working inside KERNEL_DIR: $(pwd)"
 
-          # Prevent setlocalversion from appending '+' or '-dirty'
           if [ -f "scripts/setlocalversion" ]; then
             sed -i 's/ -dirty//g; s/-dirty//g; s/echo "+"/echo ""/g' scripts/setlocalversion || true
           fi
 
-          # Clean any hardcoded /usr/local/toolchain paths in Samsung's Makefile
           sed -i 's|^CROSS_COMPILE.*=.*|CROSS_COMPILE ?= aarch64-linux-android-|g' Makefile || true
           sed -i 's|^CC.*=.*/usr/local/.*|CC ?= clang|g' Makefile || true
           sed -i 's|^CLANG_TRIPLE.*=.*|CLANG_TRIPLE ?= aarch64-linux-gnu-|g' Makefile || true
 
           if [ "${{ github.event.inputs.ksu_mode }}" = "susfs" ]; then
-            echo "=== Integrating KernelSU-Next (dev-susfs) + SUSFS 5.15 ==="
             curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs || \
             curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
 
@@ -120,39 +118,26 @@ jobs:
             cp -r $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/* ./fs/
             cp -r $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/* ./include/linux/
             cp $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch ./
-
-            # Apply SUSFS patch; if any hunk conflicts on Samsung's modified tree, log it clearly
-            if ! patch -p1 --forward < 50_add_susfs_in_gki-android13-5.15.patch; then
-              echo "WARNING: Some hunks in 50_add_susfs_in_gki-android13-5.15.patch had offsets/rejects:"
-              find . -name "*.rej" -exec head -n 40 {} +
-            fi
+            patch -p1 --forward < 50_add_susfs_in_gki-android13-5.15.patch || true
           else
-            echo "=== Integrating Official KernelSU-Next (Kprobe Mode) ==="
             curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           fi
 
-      - name: Configure s5e8535-m14xnsxx_defconfig (KSUN + SUSFS + Knox Bypass)
+      - name: Configure Defconfig & Compile Kernel
         run: |
           cd $KERNEL_DIR
           DEFCONFIG="${{ github.event.inputs.defconfig_override }}"
           if [ ! -f "arch/arm64/configs/$DEFCONFIG" ]; then
-            echo "Config $DEFCONFIG not found directly, searching arch/arm64/configs/..."
-            ls arch/arm64/configs/
             DEFCONFIG=$(ls arch/arm64/configs/*m14* arch/arm64/configs/*8535* 2>/dev/null | head -n 1 | xargs basename)
           fi
           echo "Using DEFCONFIG: $DEFCONFIG"
-          echo "DEFCONFIG=$DEFCONFIG" >> $GITHUB_ENV
 
           TARGET_CFG="arch/arm64/configs/$DEFCONFIG"
           cat << 'KCFG' >> "$TARGET_CFG"
-
-          # === KernelSU-Next & Kprobes ===
           CONFIG_KSU=y
           CONFIG_KPROBES=y
           CONFIG_HAVE_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
-
-          # === SUSFS Configuration ===
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_SUS_PATH=y
           CONFIG_KSU_SUSFS_SUS_MOUNT=y
@@ -165,8 +150,6 @@ jobs:
           CONFIG_KSU_SUSFS_ENABLE_LOG=y
           CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
           CONFIG_KSU_SUSFS_SUS_SU=n
-
-          # === Disable Samsung Knox Root Blockers ===
           CONFIG_SECURITY_DEFEX=n
           CONFIG_UH=n
           CONFIG_RKP=n
@@ -177,9 +160,6 @@ jobs:
           CONFIG_TRIM_UNUSED_KSYMS=n
           KCFG
 
-      - name: Compile Kernel Image (Samsung README_Kernel.txt Spec)
-        run: |
-          cd $KERNEL_DIR
           TC="$GITHUB_WORKSPACE/toolchain"
           export PLATFORM_VERSION=13
           export TARGET_SOC=s5e8535
@@ -189,16 +169,9 @@ jobs:
           export LLVM_IAS=1
           export DEPMOD=depmod
           export DTC_FLAGS="-@"
-          export PATH="$TC/clang-r450784e/bin:$TC/gcc64/bin:$TC/build-tools/path/linux-x86:$TC/kernel-build-tools/linux-x86/bin:$PATH"
+          export PATH="$TC/clang-r450784d/bin:$TC/gcc64/bin:$TC/build-tools/path/linux-x86:$PATH"
 
-          make \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            CC="$TC/clang-r450784e/bin/clang" \
-            CLANG_TRIPLE="aarch64-linux-gnu-" \
-            CROSS_COMPILE="$TC/gcc64/bin/aarch64-linux-android-" \
-            $DEFCONFIG
+          make ARCH=arm64 LLVM=1 LLVM_IAS=1 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="$TC/gcc64/bin/aarch64-linux-android-" $DEFCONFIG
 
           ./scripts/config --file .config \
             -e KSU -e KPROBES -e HAVE_KPROBES -e KPROBE_EVENTS \
@@ -208,25 +181,8 @@ jobs:
             -d SECURITY_DEFEX -d UH -d RKP -d KDP -d PROCA -d FIVE -d INTEGRITY -d TRIM_UNUSED_KSYMS \
             --set-str LOCALVERSION "$STOCK_LOCALVER"
 
-          make \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            CC="$TC/clang-r450784e/bin/clang" \
-            CLANG_TRIPLE="aarch64-linux-gnu-" \
-            CROSS_COMPILE="$TC/gcc64/bin/aarch64-linux-android-" \
-            olddefconfig
-
-          make -j$(nproc --all) \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            CC="$TC/clang-r450784e/bin/clang" \
-            CLANG_TRIPLE="aarch64-linux-gnu-" \
-            CROSS_COMPILE="$TC/gcc64/bin/aarch64-linux-android-" \
-            Image
-
-          ls -lh arch/arm64/boot/Image
+          make ARCH=arm64 LLVM=1 LLVM_IAS=1 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="$TC/gcc64/bin/aarch64-linux-android-" olddefconfig
+          make -j$(nproc --all) ARCH=arm64 LLVM=1 LLVM_IAS=1 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="$TC/gcc64/bin/aarch64-linux-android-" Image
 
       - name: Repack DZI1 boot.img & Build Brokkr TAR
         run: |
@@ -237,12 +193,10 @@ jobs:
           lz4 -B6 --content-size -f new-boot.img boot.img.lz4
           cp $GITHUB_WORKSPACE/assets/vbmeta.img.lz4 ./vbmeta.img.lz4
           tar -H ustar -cf KSUN_SUSFS_M146B_DZI1.tar boot.img.lz4 vbmeta.img.lz4
-          ls -lh KSUN_SUSFS_M146B_DZI1.tar new-boot.img
+          ls -lh KSUN_SUSFS_M146B_DZI1.tar
 
-      - name: Upload Compiled Brokkr TAR & Boot Image
+      - name: Upload Compiled Brokkr TAR
         uses: actions/upload-artifact@v4
         with:
           name: KSUN_SUSFS_M146B_DZI1
-          path: |
-            ${{ github.workspace }}/repack/KSUN_SUSFS_M146B_DZI1.tar
-            ${{ github.workspace }}/repack/new-boot.img
+          path: ${{ github.workspace }}/repack/KSUN_SUSFS_M146B_DZI1.tar
