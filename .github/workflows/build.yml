@@ -24,14 +24,14 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Build Dependencies
+      - name: Install Build Dependencies & Native Clang
         run: |
           sudo apt-get update
           sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib \
             git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool \
             libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush \
             rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3 pahole \
-            device-tree-compiler lz4 cpio wget jq binutils
+            device-tree-compiler lz4 cpio wget jq binutils clang lld llvm
 
       - name: Download Source & Boot Assets from Release v1.0
         env:
@@ -67,30 +67,18 @@ jobs:
           tar -xzf $GITHUB_WORKSPACE/assets/Kernel.tar.gz
           ls -la
 
-      - name: Setup LLVM/Clang & Samsung Build Tools (Stable Mirror)
+      - name: Setup Toolchain Paths
         run: |
-          mkdir -p $GITHUB_WORKSPACE/toolchain && cd $GITHUB_WORKSPACE/toolchain
+          mkdir -p $GITHUB_WORKSPACE/toolchain/clang-r450784d/bin
+          ln -s /usr/bin/clang $GITHUB_WORKSPACE/toolchain/clang-r450784d/bin/clang
+          ln -s /usr/bin/ld.lld $GITHUB_WORKSPACE/toolchain/clang-r450784d/bin/ld.lld
+          ln -s /usr/bin/llvm-ar $GITHUB_WORKSPACE/toolchain/clang-r450784d/bin/llvm-ar
+          ln -s /usr/bin/llvm-nm $GITHUB_WORKSPACE/toolchain/clang-r450784d/bin/llvm-nm
+          ln -s /usr/bin/llvm-objdump $GITHUB_WORKSPACE/toolchain/clang-r450784d/bin/llvm-objdump
+          ln -s /usr/bin/llvm-objcopy $GITHUB_WORKSPACE/toolchain/clang-r450784d/bin/llvm-objcopy
 
-          echo "Downloading stable Clang 14 / LLVM toolchain..."
-          mkdir -p clang-r450784d
-          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/androidx-main-release/clang-r416183b1.tar.gz -O clang.tar.gz || \
-          wget -q https://github.com/chenxiaolong/CPH-Kernel-Definer/releases/download/tools/clang-r450784d.tar.gz -O clang.tar.gz
-          
-          if [ -f clang.tar.gz ]; then
-            tar -xzf clang.tar.gz -C clang-r450784d
-            rm -f clang.tar.gz
-          else
-            # Fallback to apt clang if direct tarballs fail
-            sudo apt-get install -y clang lld llvm
-            mkdir -p clang-r450784d/bin
-            ln -s /usr/bin/clang clang-r450784d/bin/clang
-            ln -s /usr/bin/ld.lld clang-r450784d/bin/ld.lld
-          fi
-
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 -b android-12.1.0_r27 gcc64
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/build-tools -b android-13.0.0_r24 build-tools
-
-          ls -la $GITHUB_WORKSPACE/toolchain/clang-r450784d/bin/ || true
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 -b android-12.1.0_r27 $GITHUB_WORKSPACE/toolchain/gcc64
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/build-tools -b android-13.0.0_r24 $GITHUB_WORKSPACE/toolchain/build-tools
 
       - name: Integrate KernelSU-Next & SUSFS (gki-android13-5.15)
         run: |
