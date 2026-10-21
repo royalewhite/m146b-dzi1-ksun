@@ -27,7 +27,7 @@ jobs:
             git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool \
             libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush \
             rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3 pahole \
-            device-tree-compiler lz4 cpio wget jq binutils lld llvm
+            device-tree-compiler lz4 cpio wget jq binutils clang lld llvm
 
       - name: Download Source & Boot Assets from Release v1.0
         env:
@@ -63,12 +63,11 @@ jobs:
           tar -xzf $GITHUB_WORKSPACE/assets/Kernel.tar.gz
           ls -la
 
-      - name: Setup Toolchain (Exact README Paths)
+      - name: Setup Toolchain Paths
         run: |
           mkdir -p $GITHUB_WORKSPACE/toolchain
           cd $GITHUB_WORKSPACE/toolchain
 
-          # Download exact clang-r450784d requested by README
           mkdir -p clang/host/linux-x86/clang-r450784d
           wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android13-release/clang-r450784d.tar.gz -O clang.tar.gz || \
           wget -q https://github.com/chenxiaolong/CPH-Kernel-Definer/releases/download/tools/clang-r450784d.tar.gz -O clang.tar.gz
@@ -77,7 +76,6 @@ jobs:
             tar -xzf clang.tar.gz -C clang/host/linux-x86/clang-r450784d
             rm -f clang.tar.gz
           else
-            # Mirror fallback
             git clone --depth=1 https://github.com/droidian/android-platform-prebuilts-clang-host-linux-x86-33 clang-mirror
             mv clang-mirror/clang-r450784d/* clang/host/linux-x86/clang-r450784d/
             rm -rf clang-mirror
@@ -86,8 +84,6 @@ jobs:
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 -b android-12.1.0_r27 gcc/linux-x86/aarch64/aarch64-linux-android-4.9
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/build-tools -b android-13.0.0_r24 build/kernel/build-tools
           git clone --depth=1 https://android.googlesource.com/kernel/prebuilts/build-tools -b android13-5.15 prebuilts/kernel-build-tools || true
-
-          # Create sysroot symlink if needed for build-tools
           mkdir -p build/kernel/build-tools/sysroot
 
       - name: Integrate KernelSU-Next & SUSFS
@@ -117,11 +113,10 @@ jobs:
             curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           fi
 
-      - name: Compile Kernel (Strict README.txt Spec)
+      - name: Compile Kernel with Native HOSTCC
         run: |
           cd $KERNEL_DIR
           
-          # Append configuration options to s5e8535-m14xnsxx_defconfig
           TARGET_CFG="arch/arm64/configs/s5e8535-m14xnsxx_defconfig"
           cat << 'KCFG' >> "$TARGET_CFG"
           CONFIG_KSU=y
@@ -150,23 +145,15 @@ jobs:
           CONFIG_TRIM_UNUSED_KSYMS=n
           KCFG
 
-          # Set environment variables exactly as outlined in README_Kernel.txt
           TC="$GITHUB_WORKSPACE/toolchain"
           export PLATFORM_VERSION=13
-          export PATH="$TC/clang/host/linux-x86/clang-r450784d/bin:$TC/build/kernel/build-tools/path/linux-x86:$PATH"
-          export HOSTCFLAGS="--sysroot=$TC/build/kernel/build-tools/sysroot -I$TC/prebuilts/kernel-build-tools/linux-x86/include"
-          export HOSTLDFLAGS="--sysroot=$TC/build/kernel/build-tools/sysroot -Wl,-rpath,$TC/prebuilts/kernel-build-tools/linux-x86/lib64 -L $TC/prebuilts/kernel-build-tools/linux-x86/lib64 -fuse-ld=lld --rtlib=compiler-rt"
+          export PATH="$TC/clang/host/linux-x86/clang-r450784d/bin:$PATH"
           export TARGET_SOC=s5e8535
-          export LLVM=1
-          export DEPMOD=depmod
-          export DTC_FLAGS="-@"
           export ARCH=arm64
           export CROSS_COMPILE="$TC/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-"
-          export CC="$TC/clang/host/linux-x86/clang-r450784d/bin/clang"
-          export CLANG_TRIPLE="$TC/clang/host/linux-x86/clang-r450784d/bin/aarch64-linux-gnu-"
 
-          # Execute exact build commands from README_Kernel.txt
-          make s5e8535-m14xnsxx_defconfig
+          # Force native gcc for host tools (fixdep) to solve missing sys/types.h
+          make s5e8535-m14xnsxx_defconfig HOSTCC=gcc HOSTCXX=g++
 
           ./scripts/config --file .config \
             -e KSU -e KPROBES -e HAVE_KPROBES -e KPROBE_EVENTS \
@@ -176,13 +163,13 @@ jobs:
             -d SECURITY_DEFEX -d UH -d RKP -d KDP -d PROCA -d FIVE -d INTEGRITY -d TRIM_UNUSED_KSYMS \
             --set-str LOCALVERSION "$STOCK_LOCALVER"
 
-          make olddefconfig
-          make -j$(nproc --all)
+          make olddefconfig HOSTCC=gcc HOSTCXX=g++
+          make -j$(nproc --all) LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++
 
       - name: Repack DZI1 boot.img & Build Brokkr TAR
         run: |
           cd $GITHUB_WORKSPACE/repack
-          cp $GITHUB_KERNEL_DIR/arch/arm64/boot/Image ./kernel || cp $GITHUB_WORKSPACE/kernel/**/arch/arm64/boot/Image ./kernel || cp arch/arm64/boot/Image ./kernel
+          cp $GITHUB_WORKSPACE/kernel/**/arch/arm64/boot/Image ./kernel || cp arch/arm64/boot/Image ./kernel
           ./magiskboot unpack boot.img
           ./magiskboot repack boot.img new-boot.img
 
