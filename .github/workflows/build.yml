@@ -40,7 +40,7 @@ jobs:
       - name: Inspect Stock DZI1 boot.img & Extract Exact Vermagic
         run: |
           mkdir -p $GITHUB_WORKSPACE/repack && cd $GITHUB_WORKSPACE/repack
-          MAGISK_URL=$(curl -fsSL https://api.github.com/repos/topjohnwu/Magisk/releases/latest | jq -r '.assets[] | select(.name | endswith(".apk")) | .browser_download_url' | head -n 1)
+          MAGISK_URL=$(curl -fsSL https://github.com | jq -r '.assets[] | select(.name | endswith(".apk")) | .browser_download_url' | head -n 1)
           wget -q "$MAGISK_URL" -O magisk.zip
           unzip -j magisk.zip "lib/x86_64/libmagiskboot.so" -d ./
           mv libmagiskboot.so magiskboot && chmod +x magiskboot
@@ -48,9 +48,9 @@ jobs:
           cp $GITHUB_WORKSPACE/assets/stock_boot.img ./boot.img
           ./magiskboot unpack boot.img
 
-          FULL_VER=$(strings kernel | grep -oE "^5\.15\.[0-9]+-android13-[0-9]+-[0-9a-zA-Z_-]+" | head -n 1 || true)
+          FULL_VER=$(strings kernel | grep -oE "^5\\.15\\.[0-9]+-android13-[0-9]+-[0-9a-zA-Z_-]+" | head -n 1 || true)
           echo "Detected Stock DZI1 Kernel Version: $FULL_VER"
-          LOCAL_VER=$(echo "$FULL_VER" | sed -E 's/^5\.15\.[0-9]+//')
+          LOCAL_VER=$(echo "$FULL_VER" | sed -E 's/^5\\.15\\.[0-9]+//')
           if [ -z "$LOCAL_VER" ]; then
             LOCAL_VER="-android13-3-31192385"
           fi
@@ -69,22 +69,21 @@ jobs:
           cd $GITHUB_WORKSPACE/toolchain
           mkdir -p clang/host/linux-x86/clang-r450784d
 
-          # Download target precompiled GKI toolchain tracking tag android-13.0.0_r30
-          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android13-release/clang-r450784d.tar.gz -O clang.tar.gz
+          wget -q https://googlesource.com -O clang.tar.gz
 
           if [ -f clang.tar.gz ]; then
             tar -xzf clang.tar.gz -C clang/host/linux-x86/clang-r450784d
             rm -f clang.tar.gz
           else
             echo "Fallback to mirror..."
-            git clone --depth=1 https://github.com/droidian/android-platform-prebuilts-clang-host-linux-x86-33 clang-mirror
+            git clone --depth=1 https://github.com clang-mirror
             mv clang-mirror/clang-r450784d/* clang/host/linux-x86/clang-r450784d/
             rm -rf clang-mirror
           fi
 
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 -b android-12.1.0_r27 gcc/linux-x86/aarch64/aarch64-linux-android-4.9
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/build-tools -b android13-gsi build/kernel/build-tools
-          git clone --depth=1 https://android.googlesource.com/kernel/prebuilts/build-tools -b android13-5.15 prebuilts/kernel-build-tools
+          git clone --depth=1 https://googlesource.com -b android-12.1.0_r27 gcc/linux-x86/aarch64/aarch64-linux-android-4.9
+          git clone --depth=1 https://googlesource.com -b android13-gsi build/kernel/build-tools
+          git clone --depth=1 https://googlesource.com -b android13-5.15 prebuilts/kernel-build-tools || true
           mkdir -p build/kernel/build-tools/sysroot
 
       - name: Integrate KernelSU-Next & SUSFS
@@ -102,16 +101,16 @@ jobs:
           fi
 
           if [ "${{ github.event.inputs.ksu_mode }}" = "susfs" ]; then
-            curl -fLSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs || \
-            curl -fLSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+            curl -fLSs "https://githubusercontent.com" | bash -s dev-susfs || \
+            curl -fLSs "https://githubusercontent.com" | bash -s next
 
-            git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15 $GITHUB_WORKSPACE/susfs4ksu
+            git clone --depth=1 https://gitlab.com -b gki-android13-5.15 $GITHUB_WORKSPACE/susfs4ksu
             cp -r $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/* ./fs/
             cp -r $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/* ./include/linux/
             cp $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch ./
-            patch -p1 --forward < 50_add_susfs_in_gki-android13-5.15.patch
+            patch -p1 --forward < 50_add_susfs_in_gki-android13-5.15.patch || true
           else
-            curl -fLSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+            curl -fLSs "https://githubusercontent.com" | bash -s next
           fi
 
       - name: Compile Kernel with Native HOSTCC
@@ -153,44 +152,6 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE="$TC/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-"
 
-          # Force native gcc for host tools (fixdep) to solve missing sys/types.h
-          make s5e8535-m14xnsxx_defconfig HOSTCC=gcc HOSTCXX=g++
-
-          ./scripts/config --file .config \
-            -e KSU -e KPROBES -e HAVE_KPROBES -e KPROBE_EVENTS \
-            -e KSU_SUSFS -e KSU_SUSFS_SUS_PATH -e KSU_SUSFS_SUS_MOUNT \
-            -e KSU_SUSFS_SUS_KSTAT -e KSU_SUSFS_TRY_UMOUNT -e KSU_SUSFS_SPOOF_UNAME \
-            -e KSU_SUSFS_ENABLE_LOG -e KSU_SUSFS_OPEN_REDIRECT \
-            -d SECURITY_DEFEX -d UH -d RKP -d KDP -d PROCA -d FIVE -d INTEGRITY -d TRIM_UNUSED_KSYMS \
-            --set-str LOCALVERSION "$STOCK_LOCALVER"
-
-          make olddefconfig HOSTCC=gcc HOSTCXX=g++
-          make -j$(nproc --all) LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++
-
-      - name: Repack DZI1 boot.img & Build Brokkr TAR
-        run: |
-          cd $GITHUB_WORKSPACE/repack
-          cp $GITHUB_WORKSPACE/kernel/**/arch/arm64/boot/Image ./kernel || cp arch/arm64/boot/Image ./kernel
-          ./magiskboot unpack boot.img
-          ./magiskboot repack boot.img new-boot.img
-
-          lz4 -B6 --content-size -f new-boot.img boot.img.lz4
-          cp $GITHUB_WORKSPACE/assets/vbmeta.img.lz4 ./vbmeta.img.lz4
-          tar -H ustar -cf KSUN_SUSFS_M146B_DZI1.tar boot.img.lz4 vbmeta.img.lz4
-          ls -lh KSUN_SUSFS_M146B_DZI1.tar
-
-      - name: Upload Compiled Brokkr TAR
-        uses: actions/upload-artifact@v4
-        with:
-          name: KSUN_SUSFS_M146B_DZI1
-          path: ${{ github.workspace }}/repack/KSUN_SUSFS_M146B_DZI1.tar
-          export PLATFORM_VERSION=13
-          export PATH="$TC/clang/host/linux-x86/clang-r450784d/bin:$PATH"
-          export TARGET_SOC=s5e8535
-          export ARCH=arm64
-          export CROSS_COMPILE="$TC/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-"
-
-          # Run defconfig generation safely
           make s5e8535-m14xnsxx_defconfig HOSTCC=gcc HOSTCXX=g++
 
           ./scripts/config --file .config \
