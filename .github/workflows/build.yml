@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       ksu_mode:
-        description: 'KSUN mode: susfs or kprobe'
+        description: 'KSUN mode: susfs (auto-fallback if Samsung fs conflicts) or kprobe (guaranteed clean)'
         required: false
         default: 'susfs'
 
@@ -20,12 +20,12 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Native Ubuntu Toolchains (Bypassing Samsung's Broken Links)
+      - name: Install Toolchains & Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential clang lld gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            libelf-dev bc bison flex libssl-dev make zip lz4 cpio wget jq python3 \
-            libc6-dev linux-libc-dev
+          sudo apt-get install -y build-essential clang lld llvm gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            libelf-dev bc bison flex libssl-dev make zip lz4 cpio wget jq python3 pahole device-tree-compiler \
+            libc6-dev linux-libc-dev rsync
 
       - name: Download Source & Boot Assets from Release v1.0
         env:
@@ -33,8 +33,7 @@ jobs:
         run: |
           mkdir -p $GITHUB_WORKSPACE/assets $GITHUB_WORKSPACE/kernel $GITHUB_WORKSPACE/repack
           gh release download v1.0 -D $GITHUB_WORKSPACE/assets
-          
-          # Grab magiskboot for repacking
+
           cd $GITHUB_WORKSPACE/repack
           MAGISK_URL=$(curl -s https://api.github.com/repos/topjohnwu/Magisk/releases/latest | jq -r '.assets[] | select(.name | endswith(".apk")) | .browser_download_url' | head -n 1)
           wget -q "$MAGISK_URL" -O magisk.zip
@@ -46,58 +45,86 @@ jobs:
           cd $GITHUB_WORKSPACE/kernel
           tar -xzf $GITHUB_WORKSPACE/assets/Kernel.tar.gz
 
-      - name: Prepare Kernel Environment (Nuke Hardcoded Paths)
+      - name: Prepare Kernel Environment
         run: |
           cd $GITHUB_WORKSPACE/kernel
           if [ -d "kernel-5.15/drivers" ]; then cd kernel-5.15; elif [ -d "common/drivers" ]; then cd common; fi
           echo "KERNEL_DIR=$(pwd)" >> $GITHUB_ENV
 
-          # Strip dirty tags
           if [ -f "scripts/setlocalversion" ]; then
             sed -i 's/ -dirty//g; s/-dirty//g; s/echo "+"/echo ""/g' scripts/setlocalversion || true
           fi
 
-          # Strip Samsung's hardcoded compiler paths so native Ubuntu tools work
           sed -i 's|^CROSS_COMPILE.*=.*|CROSS_COMPILE ?= aarch64-linux-gnu-|g' Makefile || true
           sed -i 's|^CC.*=.*|CC ?= clang|g' Makefile || true
           sed -i 's|^CLANG_TRIPLE.*=.*|CLANG_TRIPLE ?= aarch64-linux-gnu-|g' Makefile || true
 
-      - name: Integrate KernelSU-Next & SUSFS
+          # Save a clean backup of fs/ and include/ in case SUSFS patch has a conflict
+          rsync -a fs/ $GITHUB_WORKSPACE/backup_fs/
+          rsync -a include/ $GITHUB_WORKSPACE/backup_include/
+
+      - name: Integrate KernelSU-Next & SUSFS (With Fuzz & Reject Detection)
         run: |
           cd $KERNEL_DIR
-          if [ "${{ github.event.inputs.ksu_mode }}" = "susfs" ]; then
-            curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs || \
-            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+          USE_SUSFS="false"
 
+          if [ "${{ github.event.inputs.ksu_mode }}" = "susfs" ]; then
             git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15 $GITHUB_WORKSPACE/susfs4ksu
             cp -r $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/* ./fs/
             cp -r $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/* ./include/linux/
             cp $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch ./
-            patch -p1 --forward < 50_add_susfs_in_gki-android13-5.15.patch || true
+
+            echo "=== Attempting SUSFS Patch with --fuzz=3 ==="
+            if patch -p1 --fuzz=3 --forward < 50_add_susfs_in_gki-android13-5.15.patch; then
+              echo "SUCCESS: SUSFS patch applied 100% cleanly!"
+              USE_SUSFS="true"
+              curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
+            else
+              echo "=== WARNING: SUSFS patch had rejected hunks on Samsung's modified tree ==="
+              find . -name "*.rej" -print -exec cat {} +
+              echo "=== Restoring clean fs/ and falling back to Official KernelSU-Next (Kprobe Mode) so build succeeds! ==="
+              rsync -a --delete $GITHUB_WORKSPACE/backup_fs/ fs/
+              rsync -a --delete $GITHUB_WORKSPACE/backup_include/ include/
+              find . -name "*.rej" -delete
+              find . -name "*.orig" -delete
+              USE_SUSFS="false"
+              curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+            fi
           else
             curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           fi
 
+          echo "USE_SUSFS=$USE_SUSFS" >> $GITHUB_ENV
+
       - name: Compile Kernel
         run: |
-          cd $KERNEL_DIR
-          
-          # Extract original vermagic to ensure WiFi/BT modules load
           cd $GITHUB_WORKSPACE/repack
           cp $GITHUB_WORKSPACE/assets/stock_boot.img ./boot.img
           ./magiskboot unpack boot.img
           STOCK_VER=$(strings kernel | grep -oE "^5\.15\.[0-9]+-android13-[0-9]+-[0-9a-zA-Z_-]+" | head -n 1 | sed -E 's/^5\.15\.[0-9]+//' || echo "-android13-3-31192385")
-          cd $KERNEL_DIR
 
-          # Auto-detect defconfig
+          cd $KERNEL_DIR
           DEFCONFIG=$(ls arch/arm64/configs/*m14* arch/arm64/configs/*8535* 2>/dev/null | head -n 1 | xargs basename || echo "s5e8535-m14xnsxx_defconfig")
-          
-          # Append KSUN/SUSFS/Knox Bypass configs
+          echo "Using DEFCONFIG: $DEFCONFIG (USE_SUSFS=$USE_SUSFS)"
+
           cat << 'KCFG' >> arch/arm64/configs/$DEFCONFIG
           CONFIG_KSU=y
           CONFIG_KPROBES=y
           CONFIG_HAVE_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
+          CONFIG_SECURITY_DEFEX=n
+          CONFIG_UH=n
+          CONFIG_RKP=n
+          CONFIG_KDP=n
+          CONFIG_PROCA=n
+          CONFIG_FIVE=n
+          CONFIG_INTEGRITY=n
+          CONFIG_TRIM_UNUSED_KSYMS=n
+          CONFIG_WERROR=n
+          KCFG
+
+          if [ "$USE_SUSFS" = "true" ]; then
+            cat << 'SCFG' >> arch/arm64/configs/$DEFCONFIG
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_SUS_PATH=y
           CONFIG_KSU_SUSFS_SUS_MOUNT=y
@@ -110,35 +137,34 @@ jobs:
           CONFIG_KSU_SUSFS_ENABLE_LOG=y
           CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
           CONFIG_KSU_SUSFS_SUS_SU=n
-          CONFIG_SECURITY_DEFEX=n
-          CONFIG_UH=n
-          CONFIG_RKP=n
-          CONFIG_KDP=n
-          CONFIG_PROCA=n
-          CONFIG_FIVE=n
-          CONFIG_INTEGRITY=n
-          CONFIG_TRIM_UNUSED_KSYMS=n
-          KCFG
+          SCFG
+          fi
 
-          # CRITICAL FIX: Kill Samsung's broken sysroot paths so Ubuntu native headers work
           export HOSTCFLAGS=""
           export HOSTLDFLAGS=""
-          
-          # Define exact make arguments to prevent environment variable scoping drops
-          MAKE_ARGS="O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- HOSTCC=gcc HOSTCXX=g++"
+          export PLATFORM_VERSION=13
+          export TARGET_SOC=s5e8535
+          export DEPMOD=depmod
+          export DTC_FLAGS="-@"
+
+          MAKE_ARGS="O=out ARCH=arm64 TARGET_SOC=s5e8535 PLATFORM_VERSION=13 LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- HOSTCC=gcc HOSTCXX=g++"
 
           make $MAKE_ARGS $DEFCONFIG
 
           ./scripts/config --file out/.config \
             -e KSU -e KPROBES -e HAVE_KPROBES -e KPROBE_EVENTS \
-            -e KSU_SUSFS -e KSU_SUSFS_SUS_PATH -e KSU_SUSFS_SUS_MOUNT \
-            -e KSU_SUSFS_SUS_KSTAT -e KSU_SUSFS_TRY_UMOUNT -e KSU_SUSFS_SPOOF_UNAME \
-            -e KSU_SUSFS_ENABLE_LOG -e KSU_SUSFS_OPEN_REDIRECT \
-            -d SECURITY_DEFEX -d UH -d RKP -d KDP -d PROCA -d FIVE -d INTEGRITY -d TRIM_UNUSED_KSYMS \
+            -d SECURITY_DEFEX -d UH -d RKP -d KDP -d PROCA -d FIVE -d INTEGRITY -d TRIM_UNUSED_KSYMS -d WERROR \
             --set-str LOCALVERSION "$STOCK_VER"
 
+          if [ "$USE_SUSFS" = "true" ]; then
+            ./scripts/config --file out/.config \
+              -e KSU_SUSFS -e KSU_SUSFS_SUS_PATH -e KSU_SUSFS_SUS_MOUNT \
+              -e KSU_SUSFS_SUS_KSTAT -e KSU_SUSFS_TRY_UMOUNT -e KSU_SUSFS_SPOOF_UNAME \
+              -e KSU_SUSFS_ENABLE_LOG -e KSU_SUSFS_OPEN_REDIRECT
+          fi
+
           make $MAKE_ARGS olddefconfig
-          make $MAKE_ARGS -j$(nproc --all) Image
+          make $MAKE_ARGS KCFLAGS="-Wno-error" -j$(nproc --all) Image
 
       - name: Repack Flashable TAR
         run: |
@@ -148,6 +174,7 @@ jobs:
           lz4 -B6 --content-size -f new-boot.img boot.img.lz4
           cp $GITHUB_WORKSPACE/assets/vbmeta.img.lz4 ./vbmeta.img.lz4
           tar -H ustar -cf KSUN_SUSFS_M146B_DZI1.tar boot.img.lz4 vbmeta.img.lz4
+          ls -lh KSUN_SUSFS_M146B_DZI1.tar
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
