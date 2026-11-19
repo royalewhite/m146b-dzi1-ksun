@@ -65,7 +65,7 @@ jobs:
           cd $KERNEL_DIR
           USE_SUSFS="false"
           if [ "${{ github.event.inputs.ksu_mode }}" = "susfs" ]; then
-            git clone --depth=1 https://gitlab.com -b gki-android13-5.15 $GITHUB_WORKSPACE/susfs4ksu
+            git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15 $GITHUB_WORKSPACE/susfs4ksu
             cp -r $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/* ./fs/
             cp -r $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/* ./include/linux/
             cp $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch ./
@@ -73,17 +73,17 @@ jobs:
             if patch -p1 --fuzz=3 --forward < 50_add_susfs_in_gki-android13-5.15.patch; then
               echo "SUCCESS: SUSFS patch applied cleanly!"
               USE_SUSFS="true"
-              curl -LSs "https://githubusercontent.com" | bash -s next-susfs
+              curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next-susfs
             else
               echo "=== FALLBACK: SUSFS failed, using clean source Kprobe Mode ==="
               rsync -a --delete $GITHUB_WORKSPACE/backup_fs/ fs/
               rsync -a --delete $GITHUB_WORKSPACE/backup_include/ include/
               find . -name "*.rej" -delete
               find . -name "*.orig" -delete
-              curl -LSs "https://githubusercontent.com" | bash -s next
+              curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
             fi
           else
-            curl -LSs "https://githubusercontent.com" | bash -s next
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           fi
           echo "USE_SUSFS=$USE_SUSFS" >> $GITHUB_ENV
 
