@@ -144,7 +144,7 @@ jobs:
           export PLATFORM_VERSION=13
           export TARGET_SOC=s5e8535
 
-          MAKE_ARGS=(O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- "CC=clang -fintegrated-as")
+          MAKE_ARGS=(O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- "CC=clang --target=aarch64-linux-gnu -fintegrated-as" CLANG_TRIPLE=aarch64-linux-gnu-)
           make "${MAKE_ARGS[@]}" $DEFCONFIG
 
           ./scripts/config --file out/.config \
