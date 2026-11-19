@@ -27,10 +27,7 @@ jobs:
 
       - name: Download Android Clang Toolchain
         run: |
-          mkdir -p $GITHUB_WORKSPACE/toolchain
-          cd $GITHUB_WORKSPACE/toolchain
-          wget -q "https://googlesource.com" -O clang-r450784e.tar.gz
-          tar -xzf clang-r450784e.tar.gz
+          git clone --depth=1 https://github.com $GITHUB_WORKSPACE/toolchain
           echo "$GITHUB_WORKSPACE/toolchain/bin" >> $GITHUB_PATH
 
       - name: Download Source & Boot Assets from Release v1.0
