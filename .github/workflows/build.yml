@@ -73,17 +73,17 @@ jobs:
             if patch -p1 --fuzz=3 --forward < 50_add_susfs_in_gki-android13-5.15.patch; then
               echo "SUCCESS: SUSFS patch applied cleanly!"
               USE_SUSFS="true"
-              curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next-susfs
+              curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/dev/kernel/setup.sh" | bash -s next-susfs
             else
               echo "=== FALLBACK: SUSFS failed, using clean source Kprobe Mode ==="
               rsync -a --delete $GITHUB_WORKSPACE/backup_fs/ fs/
               rsync -a --delete $GITHUB_WORKSPACE/backup_include/ include/
               find . -name "*.rej" -delete
               find . -name "*.orig" -delete
-              curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+              curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/dev/kernel/setup.sh" | bash -s dev
             fi
           else
-            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/dev/kernel/setup.sh" | bash -s dev
           fi
           echo "USE_SUSFS=$USE_SUSFS" >> $GITHUB_ENV
 
@@ -144,8 +144,8 @@ jobs:
           export PLATFORM_VERSION=13
           export TARGET_SOC=s5e8535
 
-          MAKE_ARGS="O=out ARCH=arm64 LLVM=1 LLVM_IAS=1"
-          make $MAKE_ARGS $DEFCONFIG
+          MAKE_ARGS=(O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- "CC=clang -fintegrated-as")
+          make "${MAKE_ARGS[@]}" $DEFCONFIG
 
           ./scripts/config --file out/.config \
             -e KSU -e KPROBES -e HAVE_KPROBES -e KPROBE_EVENTS \
@@ -159,8 +159,8 @@ jobs:
             ./scripts/config --file out/.config -e KSU_SUSFS -e KSU_SUSFS_SUS_PATH -e KSU_SUSFS_SUS_MOUNT -e KSU_SUSFS_SUS_KSTAT -e KSU_SUSFS_TRY_UMOUNT -e KSU_SUSFS_SPOOF_UNAME -e KSU_SUSFS_ENABLE_LOG -e KSU_SUSFS_OPEN_REDIRECT
           fi
 
-          make $MAKE_ARGS olddefconfig
-          make $MAKE_ARGS KCFLAGS="-Wno-error" -j$(nproc --all) Image
+          make "${MAKE_ARGS[@]}" olddefconfig
+          make "${MAKE_ARGS[@]}" KCFLAGS="-Wno-error" -j$(nproc --all) Image
 
       - name: Repack Flashable TAR
         run: |
