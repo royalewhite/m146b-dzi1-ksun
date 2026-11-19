@@ -85,7 +85,7 @@ with open("fs/namespace.c", "w") as f:
             if [ "$(find . -name "*.rej" | wc -l)" -eq 0 ]; then
               echo "SUCCESS: SUSFS patch applied cleanly!"
               USE_SUSFS="true"
-              curl -LSs "https://githubusercontent.com" | bash -s next-susfs
+              curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/dev/kernel/setup.sh" | bash -s next-susfs
             else
               echo "=== Remaining .rej files ==="
               find . -name "*.rej" -exec echo "=== FILE: {} ===" \; -exec cat {} \;
