@@ -23,13 +23,13 @@ jobs:
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libelf-dev bc bison flex libssl-dev make zip lz4 cpio wget jq python3 pahole device-tree-compiler libc6-dev linux-libc-dev rsync
+          sudo apt-get install -y build-essential libelf-dev bc bison flex libssl-dev make zip lz4 cpio wget curl jq python3 pahole device-tree-compiler libc6-dev linux-libc-dev rsync
 
       - name: Download Android Clang Toolchain
         run: |
           mkdir -p $GITHUB_WORKSPACE/toolchain
           cd $GITHUB_WORKSPACE/toolchain
-          wget -q https://googlesource.com
+          wget -q "https://googlesource.com" -O clang-r450784e.tar.gz
           tar -xzf clang-r450784e.tar.gz
           echo "$GITHUB_WORKSPACE/toolchain/bin" >> $GITHUB_PATH
 
@@ -80,7 +80,7 @@ jobs:
             if patch -p1 --fuzz=3 --forward < 50_add_susfs_in_gki-android13-5.15.patch; then
               echo "SUCCESS: SUSFS patch applied cleanly!"
               USE_SUSFS="true"
-              curl -LSs "https://githubusercontent.com" | bash -s dev-susfs
+              curl -LSs "https://githubusercontent.com" | bash -s next-susfs
             else
               echo "=== FALLBACK: SUSFS failed, using clean source Kprobe Mode ==="
               rsync -a --delete $GITHUB_WORKSPACE/backup_fs/ fs/
@@ -99,10 +99,12 @@ jobs:
           cd $GITHUB_WORKSPACE/repack
           cp $GITHUB_WORKSPACE/assets/stock_boot.img ./boot.img
           ./magiskboot unpack boot.img
-          STOCK_VER=$(strings kernel | grep -oE "^5\.15\.[0-9]+-android13-[0-9]+-[0-9a-zA-Z_-]+" | head -n 1 | sed -E 's/^5\.15\.[0-9]+//' || echo "-android13-3-31192385")
+          STOCK_VER=$(strings kernel | grep -oE "5\.15\.[0-9]+-android13-[0-9]+-[0-9a-zA-Z_-]+" | head -n 1 | sed -E 's/^5\.15\.[0-9]+//' || echo "-android13-3-31192385")
+          echo "Detected STOCK_VER: $STOCK_VER"
 
           cd $KERNEL_DIR
           DEFCONFIG=$(ls arch/arm64/configs/*m14* arch/arm64/configs/*8535* 2>/dev/null | head -n 1 | xargs basename || echo "s5e8535-m14xnsxx_defconfig")
+          echo "Using DEFCONFIG: $DEFCONFIG"
 
           cat << 'KCFG' >> arch/arm64/configs/$DEFCONFIG
           CONFIG_KSU=y
@@ -111,11 +113,20 @@ jobs:
           CONFIG_KPROBE_EVENTS=y
           CONFIG_SECURITY_DEFEX=n
           CONFIG_UH=n
+          CONFIG_UH_RKP=n
+          CONFIG_UH_LKMAUTH=n
+          CONFIG_UH_LKM_BLOCK=n
           CONFIG_RKP=n
+          CONFIG_RKP_CFP=n
+          CONFIG_RKP_CFP_JOPP=n
           CONFIG_KDP=n
+          CONFIG_KDP_CRED=n
+          CONFIG_KDP_NS=n
           CONFIG_PROCA=n
           CONFIG_FIVE=n
           CONFIG_INTEGRITY=n
+          CONFIG_MODULE_SIG=n
+          CONFIG_MODULE_SIG_FORCE=n
           CONFIG_TRIM_UNUSED_KSYMS=n
           CONFIG_WERROR=n
           KCFG
@@ -145,7 +156,10 @@ jobs:
 
           ./scripts/config --file out/.config \
             -e KSU -e KPROBES -e HAVE_KPROBES -e KPROBE_EVENTS \
-            -d SECURITY_DEFEX -d UH -d RKP -d KDP -d PROCA -d FIVE -d INTEGRITY -d TRIM_UNUSED_KSYMS -d WERROR \
+            -d SECURITY_DEFEX -d UH -d UH_RKP -d UH_LKMAUTH -d UH_LKM_BLOCK \
+            -d RKP -d RKP_CFP -d RKP_CFP_JOPP -d KDP -d KDP_CRED -d KDP_NS \
+            -d PROCA -d FIVE -d INTEGRITY -d MODULE_SIG -d MODULE_SIG_FORCE \
+            -d TRIM_UNUSED_KSYMS -d WERROR \
             --set-str LOCALVERSION "$STOCK_VER"
 
           if [ "$USE_SUSFS" = "true" ]; then
@@ -158,14 +172,16 @@ jobs:
       - name: Repack Flashable TAR
         run: |
           cd $GITHUB_WORKSPACE/repack
+          tar -H ustar -cf STOCK_BOOT_M146B_DZI1.tar boot.img
           cp $KERNEL_DIR/out/arch/arm64/boot/Image ./kernel
           ./magiskboot repack boot.img new-boot.img
-          lz4 -B6 --content-size -f new-boot.img boot.img.lz4
-          cp $GITHUB_WORKSPACE/assets/vbmeta.img.lz4 ./vbmeta.img.lz4
-          tar -H ustar -cf KSUN_SUSFS_M146B_DZI1.tar boot.img.lz4 vbmeta.img.lz4
+          mv new-boot.img boot.img
+          tar -H ustar -cf KSUN_SUSFS_M146B_DZI1.tar boot.img
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: KSUN_SUSFS_M146B_DZI1
-          path: ${{ github.workspace }}/repack/KSUN_SUSFS_M146B_DZI1.tar
+          path: |
+            ${{ github.workspace }}/repack/KSUN_SUSFS_M146B_DZI1.tar
+            ${{ github.workspace }}/repack/STOCK_BOOT_M146B_DZI1.tar
