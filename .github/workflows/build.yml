@@ -23,12 +23,7 @@ jobs:
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libelf-dev bc bison flex libssl-dev make zip lz4 cpio wget curl jq python3 pahole device-tree-compiler libc6-dev linux-libc-dev rsync
-
-      - name: Download Android Clang Toolchain
-        run: |
-          git clone --depth=1 https://github.com $GITHUB_WORKSPACE/toolchain
-          echo "$GITHUB_WORKSPACE/toolchain/bin" >> $GITHUB_PATH
+          sudo apt-get install -y build-essential clang lld llvm libelf-dev bc bison flex libssl-dev make zip lz4 cpio wget curl jq python3 pahole device-tree-compiler libc6-dev linux-libc-dev rsync
 
       - name: Download Source & Boot Assets from Release v1.0
         env:
