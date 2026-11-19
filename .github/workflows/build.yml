@@ -91,6 +91,9 @@ with open("fs/namespace.c", "w") as f:
               find . -name "*.rej" -exec echo "=== FILE: {} ===" \; -exec cat {} \;
               exit 1
             fi
+          else
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/dev/kernel/setup.sh" | bash -s dev
+          fi
           echo "USE_SUSFS=$USE_SUSFS" >> $GITHUB_ENV
 
       - name: Compile Kernel
