@@ -25,7 +25,7 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends build-essential clang lld llvm libelf-dev bc bison flex libssl-dev make zip lz4 cpio wget curl jq python3 pahole device-tree-compiler rsync ca-certificates git
+          sudo apt-get install -y -qq --no-install-recommends build-essential clang lld llvm binutils-aarch64-linux-gnu libelf-dev bc bison flex libssl-dev make zip lz4 cpio wget curl jq python3 pahole device-tree-compiler rsync ca-certificates git
 
       - name: Download Source & Boot Assets from Release v1.0
         env:
@@ -54,8 +54,6 @@ jobs:
             sed -i 's/ -dirty//g; s/-dirty//g; s/echo "+"/echo ""/g' scripts/setlocalversion || true
           fi
 
-          sed -i 's|^CROSS_COMPILE.*=.*|CROSS_COMPILE ?= aarch64-linux-gnu-|g' Makefile || true
-          sed -i 's|^CC.*=.*|CC ?= clang|g' Makefile || true
 
           rsync -a fs/ $GITHUB_WORKSPACE/backup_fs/
           rsync -a include/ $GITHUB_WORKSPACE/backup_include/
@@ -144,7 +142,12 @@ jobs:
           export PLATFORM_VERSION=13
           export TARGET_SOC=s5e8535
 
-          MAKE_ARGS=(O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- "CC=clang --target=aarch64-linux-gnu -fintegrated-as" CLANG_TRIPLE=aarch64-linux-gnu-)
+          mkdir -p $GITHUB_WORKSPACE/clang
+          curl -fLsS "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android14-release/clang-r450784e.tar.gz" | tar -xz -C $GITHUB_WORKSPACE/clang
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          clang --version
+
+          MAKE_ARGS=(O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu-)
           make "${MAKE_ARGS[@]}" $DEFCONFIG
 
           ./scripts/config --file out/.config \
