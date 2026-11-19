@@ -68,7 +68,8 @@ jobs:
             cp -r $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/* ./include/linux/
             cp $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch ./
 
-            patch -p1 --fuzz=3 --forward < 50_add_susfs_in_gki-android13-5.15.patch || true
+            chmod -R +w .
+  patch -p1 --fuzz=3 --forward < 50_add_susfs_in_gki-android13-5.15.patch || true
             if [ -f fs/namespace.c.rej ]; then
               python3 -c 's=open("fs/namespace.c").read(); s=s.replace("#include <linux/mnt_idmapping.h>","#include <linux/mnt_idmapping.h>\n#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif",1); s=s.replace("#include <trace/hooks/blk.h>","#include <trace/hooks/blk.h>\n\n#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\nextern bool susfs_is_current_ksu_domain(void);\nextern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;\n\n#define CL_COPY_MNT_NS BIT(25)\n#endif",1); open("fs/namespace.c","w").write(s)'
               rm -f fs/namespace.c.rej
