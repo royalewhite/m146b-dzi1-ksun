@@ -35,7 +35,7 @@ jobs:
           gh release download v1.0 -D $GITHUB_WORKSPACE/assets
 
           cd $GITHUB_WORKSPACE/repack
-          gh release download --repo topjohnwu/Magisk -p "*.apk" -O magisk.zip
+          gh release download --repo topjohnwu/Magisk -p "*.apk" && mv *.apk magisk.zip
           unzip -j magisk.zip "lib/x86_64/libmagiskboot.so" -d ./
           mv libmagiskboot.so magiskboot && chmod +x magiskboot
 
